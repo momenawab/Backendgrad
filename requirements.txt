@@ -1,0 +1,24 @@
+# Django Core
+Django==4.2.17
+djangorestframework==3.15.2
+django-cors-headers==4.6.0
+
+# Database
+mysqlclient==2.2.6
+
+# AI/ML
+ultralytics==8.3.40
+torch==2.5.1
+torchvision==0.20.1
+Pillow==11.1.0
+
+# WebSocket
+channels[daphne]==4.2.0
+channels-redis==4.2.1
+
+# Environment
+django-environ==0.12.0
+
+# Utilities
+python-dateutil==2.9.0.post0
+pytz==2024.2
