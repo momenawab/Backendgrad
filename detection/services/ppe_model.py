@@ -141,7 +141,8 @@ class PPEModelService:
         cls,
         image,
         conf_threshold: float = None,
-        required_ppe: List[str] = None
+        required_ppe: List[str] = None,
+        image_bytes: bytes = None
     ) -> DetectionResult:
         """
         Run PPE detection on an image.
@@ -150,6 +151,7 @@ class PPEModelService:
             image: Image file path, PIL Image, or numpy array
             conf_threshold: Confidence threshold for detections (default from settings)
             required_ppe: List of required PPE types for compliance checking
+            image_bytes: Original image bytes for face recognition (optional)
 
         Returns:
             DetectionResult object with detection data
@@ -168,10 +170,11 @@ class PPEModelService:
             # Run inference
             results = cls._model(image, conf=conf_threshold, verbose=False)
 
-            # Parse results
+            # Parse results (pass image_bytes for face recognition)
             return cls._parse_results(
                 results[0],
-                required_ppe=required_ppe
+                required_ppe=required_ppe,
+                image_bytes=image_bytes
             )
 
         except Exception as e:
@@ -189,7 +192,8 @@ class PPEModelService:
     def _parse_results(
         cls,
         result,
-        required_ppe: List[str]
+        required_ppe: List[str],
+        image_bytes: bytes = None
     ) -> DetectionResult:
         """
         Parse YOLO result into DetectionResult format.
@@ -197,19 +201,65 @@ class PPEModelService:
         Args:
             result: YOLO result object
             required_ppe: List of required PPE types
+            image_bytes: Original image bytes for face recognition (optional)
 
         Returns:
             DetectionResult object
         """
+        from .face_recognition import FaceRecognitionService
         frame_id = str(uuid.uuid4())
 
         # Get boxes and classes
         boxes = result.boxes
-        img_width, img_height = result.orig_shape
+        img_height, img_width = result.orig_shape  # YOLO orig_shape is (H, W)
 
         # Group detections by person
-        # Find all person detections first
-        person_indices = [i for i, cls in enumerate(boxes.cls) if int(cls) == 2]
+        person_indices = [i for i, cls_id in enumerate(boxes.cls) if int(cls_id) == 2]
+
+        # If no person box detected, synthesize one from all PPE boxes
+        if not person_indices:
+            ppe_indices = [i for i, cls_id in enumerate(boxes.cls) if int(cls_id) != 2]
+            if ppe_indices:
+                all_boxes = boxes.xyxy[ppe_indices].cpu().numpy()
+                synth_x1 = float(all_boxes[:, 0].min())
+                synth_y1 = float(all_boxes[:, 1].min())
+                synth_x2 = float(all_boxes[:, 2].max())
+                synth_y2 = float(all_boxes[:, 3].max())
+                # Expand vertically to approximate full body
+                height = synth_y2 - synth_y1
+                synth_y1 = max(0, synth_y1 - height * 0.3)
+                synth_y2 = min(img_height, synth_y2 + height * 0.3)
+                synth_box = np.array([synth_x1, synth_y1, synth_x2, synth_y2])
+
+                bbox = BoundingBox(
+                    x=float(synth_x1 / img_width),
+                    y=float(synth_y1 / img_height),
+                    width=float((synth_x2 - synth_x1) / img_width),
+                    height=float((synth_y2 - synth_y1) / img_height)
+                )
+                detected_ppe = cls._find_ppe_for_person(boxes, synth_box, img_width, img_height)
+                ppe_status_list = cls._calculate_ppe_status(detected_ppe, required_ppe)
+                overall_status = cls._determine_overall_status(ppe_status_list)
+                avg_conf = float(np.mean([float(boxes.conf[i]) for i in ppe_indices]))
+
+                person_detection = PersonDetection(
+                    workerId=None,
+                    boundingBox=asdict(bbox),
+                    ppeStatus=ppe_status_list,
+                    overallStatus=overall_status,
+                    confidence=avg_conf
+                )
+                compliant_count = 1 if overall_status == 'compliant' else 0
+                non_compliant_count = 0 if overall_status == 'compliant' else 1
+                return DetectionResult(
+                    frameId=frame_id,
+                    detected=1,
+                    compliant=compliant_count,
+                    nonCompliant=non_compliant_count,
+                    detections=[asdict(person_detection)]
+                )
+            # Truly nothing detected
+            return DetectionResult(frameId=frame_id, detected=0, compliant=0, nonCompliant=0, detections=[])
 
         person_detections = []
         compliant_count = 0
@@ -245,9 +295,12 @@ class PPEModelService:
             else:
                 non_compliant_count += 1
 
+            # Face recognition disabled for emulator testing
+            worker_id = None
+
             # Create person detection
             person_detection = PersonDetection(
-                workerId=None,  # Will be filled by face recognition if available
+                workerId=worker_id,  # Populated by face recognition if available
                 boundingBox=asdict(bbox),
                 ppeStatus=ppe_status_list,
                 overallStatus=overall_status,
@@ -414,7 +467,8 @@ class PPEModelService:
             image = Image.open(io.BytesIO(image_bytes))
             image = image.convert('RGB')
 
-            return cls.predict(image, conf_threshold, required_ppe)
+            # Pass image_bytes for face recognition
+            return cls.predict(image, conf_threshold, required_ppe, image_bytes=image_bytes)
 
         except Exception as e:
             logger.error(f"Error processing image bytes: {e}")

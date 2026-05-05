@@ -5,15 +5,17 @@ from rest_framework import status, generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.contrib.auth import login, logout
 from rest_framework.authtoken.models import Token
-from .models import User, WorkerProfile
+from django.contrib.auth import login, logout
+from .models import User, WorkerProfile, WorkerAccount
 from .serializers import (
     UserSerializer,
     WorkerProfileSerializer,
     RegisterSerializer,
     LoginSerializer,
-    ChangePasswordSerializer
+    ChangePasswordSerializer,
+    CreateWorkerAccountSerializer,
+    WorkerLoginResponseSerializer,
 )
 
 
@@ -44,6 +46,9 @@ class LoginView(generics.GenericAPIView):
     """
     API endpoint for user login.
     POST /api/auth/login/
+
+    Returns user data with role. If role='worker', includes worker profile.
+    Frontend determines routing based on role.
     """
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
@@ -55,14 +60,31 @@ class LoginView(generics.GenericAPIView):
         user = serializer.validated_data['user']
         login(request, user)
 
-        # Create or get auth token for mobile clients
+        # Create or get auth token for API authentication
         token, _ = Token.objects.get_or_create(user=user)
 
-        return Response({
+        response_data = {
             'message': 'Login successful.',
-            'user': UserSerializer(user).data,
             'token': token.key,
-        }, status=status.HTTP_200_OK)
+            'user': UserSerializer(user).data
+        }
+
+        # If worker, include worker profile data
+        if user.role == 'worker' and hasattr(user, 'worker_account'):
+            worker = user.worker_account.worker
+            response_data['worker'] = {
+                'worker_id': worker.worker_id,
+                'name': worker.name,
+                'department': worker.department,
+                'position': worker.position,
+                'email': worker.email,
+                'phone': worker.phone,
+                'required_ppe': worker.required_ppe,
+                'is_active': worker.is_active,
+                'hire_date': worker.hire_date.isoformat() if worker.hire_date else None,
+            }
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class LogoutView(generics.GenericAPIView):
@@ -154,3 +176,42 @@ def me_view(request):
             request.user.worker_profile
         ).data if hasattr(request.user, 'worker_profile') else None
     })
+
+
+class CreateWorkerAccountView(generics.GenericAPIView):
+    """
+    Admin creates a worker account.
+    POST /api/auth/workers/create-account/
+
+    Body:
+        - worker_id: Link to existing Worker
+        - username: Login username
+        - password: Initial password
+        - email: Optional
+
+    Only admin/supervisor can create worker accounts.
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = CreateWorkerAccountSerializer
+
+    def post(self, request, *args, **kwargs):
+        # Only admin/supervisor can create worker accounts
+        if request.user.role not in ['admin', 'supervisor']:
+            return Response({
+                'error': 'You do not have permission to create worker accounts.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        worker_account = serializer.save()
+
+        return Response({
+            'message': 'Worker account created successfully.',
+            'worker_account': {
+                'id': worker_account.id,
+                'username': worker_account.user.username,
+                'worker_id': worker_account.worker.worker_id,
+                'worker_name': worker_account.worker.name,
+            }
+        }, status=status.HTTP_201_CREATED)

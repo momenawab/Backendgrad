@@ -32,7 +32,10 @@ class ViolationRecordSerializer(serializers.ModelSerializer):
     def get_image_url(self, obj):
         """Get full image URL."""
         if obj.image:
-            return self.context['request'].build_absolute_uri(obj.image.url)
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.image.url)
+            return obj.image.url
         return None
 
 

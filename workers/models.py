@@ -64,6 +64,18 @@ class Worker(models.Model):
         help_text="Worker photo for identification"
     )
 
+    # Face recognition fields
+    face_encoding = models.JSONField(
+        blank=True,
+        null=True,
+        help_text="Cached 128-dimensional face encoding vector"
+    )
+
+    face_photo_valid = models.BooleanField(
+        default=False,
+        help_text="Whether the photo contains a valid detectable face"
+    )
+
     # PPE requirements as JSON
     # e.g., ["hardHat", "vest", "gloves", "steelToedBoots"]
     required_ppe = models.JSONField(

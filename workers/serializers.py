@@ -5,12 +5,29 @@ from rest_framework import serializers
 from .models import Worker, WorkerShift
 
 
+class WorkerListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for worker listings."""
+    photo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Worker
+        fields = ['id', 'worker_id', 'name', 'department', 'position', 'photo_url']
+
+    def get_photo_url(self, obj):
+        if obj.photo:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.photo.url)
+        return None
+
+
 class WorkerSerializer(serializers.ModelSerializer):
     """Serializer for Worker model."""
     photo_url = serializers.SerializerMethodField()
     compliance_rate = serializers.ReadOnlyField()
     supervisor_name = serializers.SerializerMethodField()
     required_ppe_display = serializers.SerializerMethodField()
+    face_photo_valid = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Worker
@@ -19,6 +36,7 @@ class WorkerSerializer(serializers.ModelSerializer):
                   'photo', 'photo_url', 'required_ppe', 'required_ppe_display',
                   'hire_date', 'employee_id', 'supervisor', 'supervisor_name',
                   'is_active', 'notes', 'compliance_rate',
+                  'face_photo_valid',
                   'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at', 'compliance_rate']
 

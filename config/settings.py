@@ -200,7 +200,8 @@ ASGI_APPLICATION = 'config.asgi.application'
 
 
 # PPE Detection Model Settings
-PPE_MODEL_PATH = '/Users/momen/StudioProjects/Grad Project/graduation_project 2/best (4).pt'
+PPE_MODEL_PATH = '/Users/momen/My Projects/Grad Project/graduation_project 2/best (4).pt'
+DETECTION_CONFIDENCE_THRESHOLD = 0.15
 
 # PPE Class mappings
 PPE_CLASS_MAP = {
@@ -263,3 +264,7 @@ LOGGING = {
 
 # Create logs directory if it doesn't exist
 os.makedirs(BASE_DIR / 'logs', exist_ok=True)
+
+# Power BI Streaming Dataset push URL
+# Paste the URL from: Power BI Service → My Workspace → Streaming dataset → API info
+POWER_BI_PUSH_URL = os.environ.get('POWER_BI_PUSH_URL', '')

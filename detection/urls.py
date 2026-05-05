@@ -11,7 +11,8 @@ from .views import (
     end_session,
     session_list,
     session_detail,
-    health_check
+    health_check,
+    dashboard_stats,
 )
 
 urlpatterns = [
@@ -19,6 +20,7 @@ urlpatterns = [
     path('upload/', upload_and_detect, name='upload-and-detect'),
     path('records/', detection_records, name='detection-records'),
     path('health/', health_check, name='health-check'),
+    path('dashboard-stats/', dashboard_stats, name='dashboard-stats'),
 
     # Violation endpoints
     path('violations/', violation_records, name='violation-records'),

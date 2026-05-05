@@ -13,6 +13,7 @@ from django.shortcuts import get_object_or_404
 from django.conf import settings
 
 from .models import DetectionRecord, ViolationRecord, DetectionSession
+from .services.powerbi_service import push_violation
 from .serializers import (
     DetectionRecordSerializer,
     ViolationRecordSerializer,
@@ -101,13 +102,23 @@ def upload_and_detect(request):
                     if ppe['status'] == 'compliant'
                 ]
 
+                # Get worker name from worker_id if available
+                worker_id = detection.get('workerId')
+                worker_name = None
+                if worker_id:
+                    try:
+                        from workers.models import Worker
+                        worker = Worker.objects.filter(worker_id=worker_id).first()
+                        if worker:
+                            worker_name = worker.name
+                    except Exception as e:
+                        logger.warning(f"Could not fetch worker name for {worker_id}: {e}")
+
                 # Create violation record (with image if available)
-                # For now, we'll create it without storing the full image
-                # to avoid storage issues. In production, store the image.
                 violation = ViolationRecord.objects.create(
                     violation_id=str(uuid.uuid4()),
-                    worker_id=detection.get('workerId'),
-                    worker_name=detection.get('workerId'),  # Would be filled by face recognition
+                    worker_id=worker_id,
+                    worker_name=worker_name or worker_id or 'Unknown Worker',
                     missing_ppe=missing_ppe,
                     detected_ppe=detected_ppe,
                     image=image_file,  # Store the uploaded image
@@ -118,6 +129,19 @@ def upload_and_detect(request):
                     violation,
                     context={'request': request}
                 ).data)
+
+                # Push to Power BI streaming dataset (non-blocking)
+                total_today = ViolationRecord.objects.filter(
+                    timestamp__date=datetime.now().date()
+                ).count()
+                push_violation(
+                    worker_id=worker_id,
+                    worker_name=worker_name or worker_id or 'Unknown Worker',
+                    missing_ppe=missing_ppe,
+                    severity=violation.severity,
+                    total_violations_today=total_today,
+                    compliance_rate=max(0.0, 100.0 - (total_today * 5)),
+                )
 
         # Return detection result
         response_data = result.to_dict()
@@ -353,12 +377,18 @@ def health_check(request):
 
     GET /api/detection/health/
     """
-    model_loaded = PPEModelService._model_loaded
+    from .services.face_recognition import FaceRecognitionService
+
+    ppe_model_loaded = PPEModelService._model_loaded
+    face_model_loaded = FaceRecognitionService._model_loaded
+    worker_count = FaceRecognitionService.get_worker_count()
 
     return Response({
         'status': 'healthy',
-        'model_loaded': model_loaded,
-        'model_path': getattr(settings, 'PPE_MODEL_PATH', 'Not configured')
+        'ppe_model_loaded': ppe_model_loaded,
+        'face_model_loaded': face_model_loaded,
+        'worker_count': worker_count,
+        'ppe_model_path': getattr(settings, 'PPE_MODEL_PATH', 'Not configured')
     })
 
 
@@ -383,3 +413,80 @@ def _calculate_severity(missing_ppe):
         return 'medium'
     else:
         return 'low'
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def dashboard_stats(request):
+    """
+    Aggregated stats for the Safety & Compliance Dashboard.
+    GET /api/detection/dashboard-stats/
+    """
+    from django.db.models import Count, Q
+    from django.db.models.functions import TruncDate
+    from datetime import date, timedelta
+    from workers.models import Worker
+
+    # KPI cards
+    total_workers = Worker.objects.count()
+    total_violations = ViolationRecord.objects.count()
+    workers_with_violations = ViolationRecord.objects.values('worker_id').distinct().count()
+    compliance_rate = (
+        round((total_workers - workers_with_violations) / total_workers * 100, 2)
+        if total_workers > 0 else 0.0
+    )
+    high_risk_count = ViolationRecord.objects.filter(severity='high').count()
+    high_risk_percent = (
+        round(high_risk_count / total_violations * 100, 2)
+        if total_violations > 0 else 0.0
+    )
+
+    # Daily violations — last 90 days for the time-series chart
+    ninety_days_ago = date.today() - timedelta(days=90)
+    daily = (
+        ViolationRecord.objects
+        .filter(timestamp__date__gte=ninety_days_ago)
+        .annotate(day=TruncDate('timestamp'))
+        .values('day')
+        .annotate(count=Count('id'))
+        .order_by('day')
+    )
+    daily_violations = [
+        {'date': str(row['day']), 'count': row['count']}
+        for row in daily
+    ]
+
+    # Violations by department (mapped from worker department)
+    dept_violations = (
+        ViolationRecord.objects
+        .exclude(worker_id__isnull=True)
+        .exclude(worker_id='')
+        .values('worker_id')
+        .annotate(count=Count('id'))
+    )
+    dept_map = {}
+    for row in dept_violations:
+        worker = Worker.objects.filter(worker_id=row['worker_id']).first()
+        dept = (worker.department or 'Unknown') if worker else 'Unknown'
+        dept_map[dept] = dept_map.get(dept, 0) + row['count']
+    violations_by_department = [
+        {'department': k, 'count': v}
+        for k, v in sorted(dept_map.items(), key=lambda x: -x[1])
+    ]
+
+    # Violation status — workers with at least one violation vs without
+    violated_workers = workers_with_violations
+    compliant_workers = max(0, total_workers - violated_workers)
+
+    return Response({
+        'total_workers': total_workers,
+        'total_violations': total_violations,
+        'compliance_rate': compliance_rate,
+        'high_risk_percent': high_risk_percent,
+        'daily_violations': daily_violations,
+        'violations_by_department': violations_by_department,
+        'violation_status': {
+            'violated': violated_workers,
+            'compliant': compliant_workers,
+        },
+    })

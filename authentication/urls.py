@@ -10,7 +10,8 @@ from .views import (
     ChangePasswordView,
     WorkerProfileListView,
     WorkerProfileDetailView,
-    me_view
+    me_view,
+    CreateWorkerAccountView,
 )
 
 urlpatterns = [
@@ -22,4 +23,6 @@ urlpatterns = [
     path('me/', me_view, name='me'),
     path('workers/', WorkerProfileListView.as_view(), name='worker-list'),
     path('workers/<int:id>/', WorkerProfileDetailView.as_view(), name='worker-detail'),
+    # Worker account creation (admin only)
+    path('workers/create-account/', CreateWorkerAccountView.as_view(), name='worker-create-account'),
 ]

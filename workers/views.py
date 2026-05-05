@@ -1,11 +1,13 @@
 """
 Views for Workers app.
 """
+import logging
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
+from django.views.decorators.csrf import csrf_exempt
 
 from .models import Worker, WorkerShift
 from .serializers import (
@@ -15,6 +17,8 @@ from .serializers import (
     WorkerDetailSerializer,
     WorkerShiftSerializer
 )
+
+logger = logging.getLogger(__name__)
 
 
 class WorkerListCreateView(generics.ListCreateAPIView):
@@ -124,6 +128,49 @@ def worker_stats(request):
     })
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def worker_violations_summary(request):
+    """
+    Per-worker violation totals for the reports screen.
+
+    GET /api/workers/violations-summary/
+    Returns a list of {worker_id, name, photo_url, violation_count, total_detections}.
+    """
+    from django.db.models import Count
+    from detection.models import ViolationRecord
+
+    counts = dict(
+        ViolationRecord.objects
+        .exclude(worker_id__isnull=True)
+        .exclude(worker_id='')
+        .values_list('worker_id')
+        .annotate(c=Count('id'))
+    )
+
+    results = []
+    for worker in Worker.objects.all().order_by('name'):
+        violation_count = counts.get(worker.worker_id, 0)
+        photo_url = None
+        if worker.photo:
+            try:
+                photo_url = request.build_absolute_uri(worker.photo.url)
+            except Exception:
+                photo_url = None
+        results.append({
+            'worker_id': worker.worker_id,
+            'name': worker.name,
+            'photo_url': photo_url,
+            'violation_count': violation_count,
+            # No per-worker detection tally exists yet; mirror violation_count
+            # so the client renders without divide-by-zero. Replace once
+            # DetectionRecord tracks worker_id.
+            'total_detections': violation_count,
+        })
+
+    return Response(results)
+
+
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def worker_shifts(request, worker_id):
@@ -188,3 +235,138 @@ def worker_violations(request, worker_id):
             context={'request': request}
         ).data
     })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])  # Changed to AllowAny for testing
+def add_worker_with_photo(request):
+    """
+    Add a new worker with face photo for recognition.
+
+    POST /api/workers/add-with-photo/
+
+    Body (multipart/form-data):
+        worker_id: string (required)
+        name: string (required)
+        photo: file (required - clear face photo)
+        email: string (optional)
+        phone: string (optional)
+        department: string (optional)
+        position: string (optional)
+        shift: string (optional)
+        required_ppe: array (optional)
+    """
+    from detection.services.face_recognition import FaceRecognitionService
+    import numpy as np
+
+    try:
+        # Extract data
+        worker_id = request.data.get('worker_id')
+        name = request.data.get('name')
+        photo = request.data.get('photo')
+
+        if not all([worker_id, name, photo]):
+            return Response({
+                'error': 'worker_id, name, and photo are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if worker_id already exists
+        if Worker.objects.filter(worker_id=worker_id).exists():
+            return Response({
+                'error': 'A worker with this ID already exists'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Extract face encoding from photo
+        face_encoding = FaceRecognitionService.extract_face_encoding(photo.read())
+
+        if face_encoding is None:
+            return Response({
+                'error': 'No face detected in the uploaded photo. Please upload a clear photo showing the face.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create worker with face encoding
+        worker = Worker.objects.create(
+            worker_id=worker_id,
+            name=name,
+            email=request.data.get('email'),
+            phone=request.data.get('phone'),
+            department=request.data.get('department'),
+            position=request.data.get('position'),
+            shift=request.data.get('shift', 'day'),
+            photo=photo,
+            required_ppe=request.data.get('required_ppe', []),
+            face_encoding=face_encoding.tolist(),  # Convert numpy to list
+            face_photo_valid=True,
+            created_by=request.user if request.user.is_authenticated else None
+        )
+
+        # Add to face recognition model
+        success = FaceRecognitionService.add_worker_to_model(worker_id, face_encoding)
+
+        if not success:
+            logger.warning(f"Worker created but not added to face model: {worker_id}")
+
+        return Response({
+            'message': 'Worker added successfully',
+            'worker_id': worker_id,
+            'name': worker.name,
+            'face_encoding_stored': True
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"Error adding worker: {e}")
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])  # Changed to AllowAny for testing
+def retrain_face_model(request):
+    """
+    Retrain face recognition model with all workers in database.
+
+    POST /api/workers/retrain-face-model/
+    """
+    from detection.services.face_recognition import FaceRecognitionService
+    import numpy as np
+
+    try:
+        # Load all workers with valid face encodings
+        workers = Worker.objects.filter(face_photo_valid=True)
+
+        if workers.count() == 0:
+            return Response({
+                'error': 'No workers with valid photos found'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        workers_data = []
+        for worker in workers:
+            if worker.face_encoding:
+                workers_data.append({
+                    'worker_id': worker.worker_id,
+                    'face_encoding': np.array(worker.face_encoding)
+                })
+
+        if not workers_data:
+            return Response({
+                'error': 'No workers with face encodings found'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Retrain model
+        success = FaceRecognitionService.retrain_from_workers(workers_data)
+
+        if success:
+            return Response({
+                'message': f'Model retrained with {len(workers_data)} workers'
+            })
+        else:
+            return Response({
+                'error': 'Failed to retrain model'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    except Exception as e:
+        logger.error(f"Error retraining model: {e}")
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

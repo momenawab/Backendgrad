@@ -16,6 +16,7 @@ class User(AbstractUser):
         ('supervisor', 'Supervisor'),
         ('operator', 'Operator'),
         ('viewer', 'Viewer'),
+        ('worker', 'Worker'),
     ]
 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='viewer')
@@ -91,3 +92,37 @@ class WorkerProfile(models.Model):
             'earProtection': 'Ear Protection',
         }
         return [ppe_names.get(ppe, ppe) for ppe in self.required_ppe]
+
+
+class WorkerAccount(models.Model):
+    """
+    Links a User account to a Worker profile for worker login functionality.
+    """
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='worker_account'
+    )
+    worker = models.OneToOneField(
+        'workers.Worker',
+        on_delete=models.CASCADE,
+        related_name='user_account'
+    )
+
+    # Device tokens for push notifications
+    fcm_token = models.TextField(blank=True, null=True)
+    device_id = models.CharField(max_length=200, blank=True, null=True)
+
+    # Notification preferences
+    enable_notifications = models.BooleanField(default=True)
+    notify_on_violation = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'worker_accounts'
+        verbose_name_plural = "Worker Accounts"
+
+    def __str__(self):
+        return f"WorkerAccount: {self.user.username} -> {self.worker.name}"

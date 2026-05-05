@@ -12,6 +12,7 @@ from channels.exceptions import StopConsumer
 import asyncio
 
 from .services import PPEModelService
+from .services.notification_service import NotificationService
 
 logger = logging.getLogger('detection')
 
@@ -34,8 +35,8 @@ class DetectionConsumer(AsyncWebsocketConsumer):
         await self.accept()
         self.session_id = f"ws_session_{uuid.uuid4().hex[:12]}"
         self.frame_count = 0
-        self.required_ppe = ['hardHat', 'vest', 'gloves', 'steelToedBoots']
-        self.confidence_threshold = 0.5
+        self.required_ppe = ['hardHat', 'vest']
+        self.confidence_threshold = 0.15
 
         logger.info(f"WebSocket connected: {self.session_id}")
 
@@ -111,6 +112,11 @@ class DetectionConsumer(AsyncWebsocketConsumer):
     async def handle_image_frame(self, bytes_data):
         """Handle binary image frames for detection."""
         self.frame_count += 1
+        logger.info(f"Frame {self.frame_count} received: {len(bytes_data)} bytes")
+        if self.frame_count == 1:
+            with open('/tmp/debug_frame.jpg', 'wb') as f:
+                f.write(bytes_data)
+            logger.info("Saved debug frame to /tmp/debug_frame.jpg")
 
         try:
             # Run detection in a thread to avoid blocking
@@ -120,6 +126,8 @@ class DetectionConsumer(AsyncWebsocketConsumer):
                 conf_threshold=self.confidence_threshold,
                 required_ppe=self.required_ppe
             )
+
+            logger.info(f"Frame {self.frame_count} result: detected={result.detected}, compliant={result.compliant}, nonCompliant={result.nonCompliant}")
 
             # Send detection result
             await self.send_json({
@@ -132,6 +140,12 @@ class DetectionConsumer(AsyncWebsocketConsumer):
                 'detections': result.detections
             })
 
+            # Check for violations and send notifications
+            if result.nonCompliant > 0:
+                for detection in result.detections:
+                    if detection.get('overallStatus') != 'compliant':
+                        await self._send_violation_notification(detection)
+
         except Exception as e:
             logger.error(f"Error processing image frame: {e}")
             await self.send_json({
@@ -139,6 +153,150 @@ class DetectionConsumer(AsyncWebsocketConsumer):
                 'frame_number': self.frame_count,
                 'message': f'Detection failed: {str(e)}'
             })
+
+    async def _send_violation_notification(self, detection):
+        """Send violation notification for a non-compliant detection."""
+        try:
+            worker_id = detection.get('workerId')
+            worker_name = detection.get('workerName') or worker_id or 'Unknown'
+
+            # Get missing PPE
+            missing_ppe = []
+            for ppe in detection.get('ppeStatus', []):
+                if ppe.get('status') != 'compliant':
+                    missing_ppe.append(ppe.get('type'))
+
+            # Only notify if there's missing PPE
+            if missing_ppe:
+                await NotificationService.send_violation_notification_async({
+                    'worker_id': worker_id,
+                    'worker_name': worker_name,
+                    'missing_ppe': missing_ppe,
+                    'required_ppe': self.required_ppe,
+                    'timestamp': None,  # Will use current time
+                })
+
+        except Exception as e:
+            logger.error(f"Error sending violation notification: {e}")
+
+    async def send_json(self, data):
+        """Send JSON data to the client."""
+        await self.send(text_data=json.dumps(data))
+
+
+class NotificationConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket consumer for real-time notifications.
+
+    URL: ws://localhost:8080/ws/notifications/
+
+    Workers and admins connect here to receive violation notifications.
+
+    Protocol:
+    1. Client connects with token in query string
+    2. Server authenticates and subscribes to appropriate channels
+    3. Client receives notifications in real-time
+    4. Connection can be closed by either party
+    """
+
+    async def connect(self):
+        """Handle WebSocket connection."""
+        # Accept the connection
+        await self.accept()
+
+        # Get user info from query string (token-based auth)
+        query_string = self.scope.get('query_string', b'').decode()
+        self.user_id = None
+        self.worker_id = None
+        self.role = None
+
+        # Parse query parameters
+        params = dict(param.split('=') for param in query_string.split('&') if '=' in param)
+        self.user_id = params.get('user_id')
+        self.role = params.get('role')
+        self.worker_id = params.get('worker_id')
+
+        # Subscribe to appropriate channels based on role
+        if self.role == 'worker' and self.worker_id:
+            # Worker subscribes to their personal channel
+            worker_channel = f'worker_{self.worker_id}'
+            await self.channel_layer.group_add(
+                worker_channel,
+                self.channel_name
+            )
+            logger.info(f"Worker {self.worker_id} connected to notifications")
+
+        elif self.role in ['admin', 'supervisor']:
+            # Admins subscribe to admins and monitoring channels
+            await self.channel_layer.group_add(
+                'admins',
+                self.channel_name
+            )
+            await self.channel_layer.group_add(
+                'monitoring',
+                self.channel_name
+            )
+            logger.info(f"Admin {self.user_id} connected to notifications")
+
+        # Send welcome message
+        await self.send_json({
+            'type': 'connected',
+            'message': 'Connected to notification service',
+            'role': self.role,
+        })
+
+    async def disconnect(self, close_code):
+        """Handle WebSocket disconnection."""
+        # Unsubscribe from channels
+        if self.role == 'worker' and self.worker_id:
+            worker_channel = f'worker_{self.worker_id}'
+            await self.channel_layer.group_discard(
+                worker_channel,
+                self.channel_name
+            )
+        elif self.role in ['admin', 'supervisor']:
+            await self.channel_layer.group_discard('admins', self.channel_name)
+            await self.channel_layer.group_discard('monitoring', self.channel_name)
+
+        logger.info(f"Notification client disconnected: {close_code}")
+        raise StopConsumer()
+
+    async def receive(self, text_data=None, bytes_data=None):
+        """Handle incoming WebSocket messages."""
+        try:
+            if text_data:
+                data = json.loads(text_data)
+                message_type = data.get('type')
+
+                if message_type == 'ping':
+                    await self.send_json({'type': 'pong'})
+
+                elif message_type == 'mark_read':
+                    # Mark notification as read (future: update database)
+                    notification_id = data.get('notification_id')
+                    logger.info(f"Notification {notification_id} marked as read")
+
+                else:
+                    await self.send_json({
+                        'type': 'error',
+                        'message': f'Unknown message type: {message_type}'
+                    })
+
+        except Exception as e:
+            logger.error(f"Error processing notification message: {e}")
+            await self.send_json({
+                'type': 'error',
+                'message': str(e)
+            })
+
+    async def notification_message(self, event):
+        """
+        Handle notification messages from channel layer.
+
+        This is called when a notification is sent to a group this consumer is part of.
+        """
+        # Send the notification data to the client
+        await self.send_json(event.get('data', {}))
 
     async def send_json(self, data):
         """Send JSON data to the client."""
