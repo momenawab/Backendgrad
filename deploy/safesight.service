@@ -1,0 +1,23 @@
+# systemd unit for the SafeSight ASGI app (daphne).
+# Install: sudo cp deploy/safesight.service /etc/systemd/system/safesight.service
+#          sudo systemctl daemon-reload && sudo systemctl enable --now safesight
+# Logs:    journalctl -u safesight -f
+#
+# Adjust User and the two paths below to match your server.
+
+[Unit]
+Description=SafeSight Django ASGI (daphne)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/safesight-backend
+EnvironmentFile=/home/ubuntu/safesight-backend/.env
+# Bind to localhost:8001; nginx proxies public traffic to it.
+ExecStart=/home/ubuntu/safesight-backend/venv/bin/daphne -b 127.0.0.1 -p 8001 config.asgi:application
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
