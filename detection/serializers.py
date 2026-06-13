@@ -26,8 +26,9 @@ class ViolationRecordSerializer(serializers.ModelSerializer):
                   'image', 'image_url', 'bounding_box',
                   'severity', 'status', 'notes',
                   'alert_sent', 'alert_sent_at',
+                  'last_seen', 'acknowledged_at',
                   'resolved_at', 'resolved_by']
-        read_only_fields = ['id', 'timestamp', 'image_url']
+        read_only_fields = ['id', 'timestamp', 'image_url', 'last_seen']
 
     def get_image_url(self, obj):
         """Get full image URL."""

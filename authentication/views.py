@@ -264,6 +264,30 @@ def notification_preferences_view(request):
     return Response({**DEFAULT_NOTIFICATION_PREFERENCES, **(user.notification_preferences or {})})
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def register_fcm_token(request):
+    """
+    F5 — register a device's FCM token for push notifications.
+    POST /api/auth/fcm-token/   body: { "fcm_token": "...", "device_id": "..."? }
+    Stored on the user's WorkerAccount (workers receive pushes).
+    """
+    token = request.data.get('fcm_token')
+    if not token:
+        return Response({'error': 'fcm_token is required'}, status=status.HTTP_400_BAD_REQUEST)
+    account = getattr(request.user, 'worker_account', None)
+    if account is None:
+        return Response(
+            {'error': 'Only worker accounts can register a device token.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    account.fcm_token = token
+    if request.data.get('device_id'):
+        account.device_id = request.data.get('device_id')
+    account.save(update_fields=['fcm_token', 'device_id', 'updated_at'])
+    return Response({'message': 'Device token registered.'}, status=status.HTTP_200_OK)
+
+
 class CreateWorkerAccountView(generics.GenericAPIView):
     """
     Admin creates a worker account.

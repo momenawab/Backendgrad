@@ -8,7 +8,8 @@ from .views import (
     compliance_report,
     worker_report,
     export_report,
-    generated_reports
+    generated_reports,
+    shift_report,
 )
 
 urlpatterns = [
@@ -19,4 +20,5 @@ urlpatterns = [
     path('worker/', worker_report, name='worker-report'),
     path('export/', export_report, name='export-report'),
     path('generated/', generated_reports, name='generated-reports'),
+    path('shifts/', shift_report, name='shift-report'),
 ]

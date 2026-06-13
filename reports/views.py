@@ -469,11 +469,46 @@ def export_report(request):
         report.completed_at = timezone.now()
         report.save()
         return response
+    elif report_format == 'pdf':
+        from django.http import HttpResponse
+        from .services.pdf import build_report_pdf
+        pdf_bytes = build_report_pdf(report.title, data)
+        # Persist to media for the "generated reports" list.
+        try:
+            import os
+            from django.conf import settings
+            rel = f"reports/{report.report_id}.pdf"
+            abs_path = os.path.join(settings.MEDIA_ROOT, rel)
+            os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+            with open(abs_path, 'wb') as fh:
+                fh.write(pdf_bytes)
+            report.file_path = rel
+            report.file_size = len(pdf_bytes)
+        except Exception as e:
+            logger.warning(f"Could not persist PDF: {e}")
+        report.status = 'completed'
+        report.completed_at = timezone.now()
+        report.save()
+        resp = HttpResponse(pdf_bytes, content_type='application/pdf')
+        resp['Content-Disposition'] = f'attachment; filename="{report.report_id}.pdf"'
+        return resp
     else:  # JSON
         report.status = 'completed'
         report.completed_at = timezone.now()
         report.save()
         return Response(data)
+
+
+def compute_report_data(report_type, *, start_date=None, end_date=None,
+                        department=None, worker_id=None):
+    """Shared dispatcher reused by the scheduled-reports command (F6)."""
+    if report_type == 'violations':
+        return _get_violation_data(start_date, end_date, department, worker_id)
+    elif report_type == 'compliance':
+        return _get_compliance_data(start_date, end_date, department)
+    elif report_type == 'worker':
+        return _get_worker_data(worker_id)
+    return _get_summary_data(start_date, end_date, department)
 
 
 def _get_summary_data(start_date, end_date, department):
@@ -607,3 +642,41 @@ def generated_reports(request):
         context={'request': request}
     )
     return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def shift_report(request):
+    """
+    F14 — Compliance/violations grouped by shift type.
+    GET /api/reports/shifts/   (optional ?days=30)
+    """
+    from datetime import timedelta
+    from django.db.models import Sum, Count
+    from django.utils import timezone
+    from workers.models import WorkerShift
+
+    days = int(request.query_params.get('days', 30))
+    since = timezone.now().date() - timedelta(days=days)
+    grouped = (
+        WorkerShift.objects.filter(date__gte=since)
+        .values('shift_type')
+        .annotate(
+            shift_count=Count('id'),
+            total_violations=Sum('violations_count'),
+            total_alerts=Sum('alerts_triggered'),
+        )
+        .order_by('shift_type')
+    )
+    data = []
+    for g in grouped:
+        shifts = g['shift_count'] or 0
+        violations = g['total_violations'] or 0
+        data.append({
+            'shift_type': g['shift_type'],
+            'shift_count': shifts,
+            'total_violations': violations,
+            'total_alerts': g['total_alerts'] or 0,
+            'avg_violations_per_shift': round(violations / shifts, 2) if shifts else 0,
+        })
+    return Response({'period_days': days, 'group_by': 'shift_type', 'results': data})

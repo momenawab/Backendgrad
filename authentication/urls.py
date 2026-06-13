@@ -14,6 +14,7 @@ from .views import (
     CreateWorkerAccountView,
     settings_view,
     notification_preferences_view,
+    register_fcm_token,
 )
 
 urlpatterns = [
@@ -24,6 +25,7 @@ urlpatterns = [
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('settings/', settings_view, name='settings'),
     path('notification-preferences/', notification_preferences_view, name='notification-preferences'),
+    path('fcm-token/', register_fcm_token, name='fcm-token'),
     path('me/', me_view, name='me'),
     path('workers/', WorkerProfileListView.as_view(), name='worker-list'),
     path('workers/<int:id>/', WorkerProfileDetailView.as_view(), name='worker-detail'),

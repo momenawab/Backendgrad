@@ -140,11 +140,18 @@ class DetectionConsumer(AsyncWebsocketConsumer):
                 'detections': result.detections
             })
 
-            # Check for violations and send notifications
-            if result.nonCompliant > 0:
-                for detection in result.detections:
-                    if detection.get('overallStatus') != 'compliant':
-                        await self._send_violation_notification(detection)
+            # Enforcement (F1): de-duplicate, persist, auto-resolve, notify.
+            # Runs for every frame so compliant frames can auto-close violations.
+            from channels.db import database_sync_to_async
+            from django.core.files.base import ContentFile
+            from .services.enforcement import process_detections
+            frame_image = ContentFile(bytes_data, name=f"frame_{result.frameId}.jpg")
+            await database_sync_to_async(process_detections)(
+                result.detections,
+                image=frame_image,
+                session_id=getattr(self, 'session_id', None),
+                required_ppe=self.required_ppe,
+            )
 
         except Exception as e:
             logger.error(f"Error processing image frame: {e}")

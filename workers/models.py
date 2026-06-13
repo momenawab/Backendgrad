@@ -98,6 +98,9 @@ class Worker(models.Model):
     # Status
     is_active = models.BooleanField(default=True)
     notes = models.TextField(blank=True, null=True)
+    # F7 — flag set when this worker has been assigned safety re-training
+    # (driven by the repeat-offender risk score).
+    training_assigned = models.BooleanField(default=False)
 
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)

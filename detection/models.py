@@ -92,6 +92,14 @@ class ViolationRecord(models.Model):
     alert_sent = models.BooleanField(default=False)
     alert_sent_at = models.DateTimeField(blank=True, null=True)
 
+    # F1 — enforcement loop: last frame this same open violation was seen,
+    # used for cooldown de-duplication so one ongoing violation isn't recreated
+    # every frame.
+    last_seen = models.DateTimeField(blank=True, null=True)
+
+    # F4 — worker acknowledgement of the violation notification.
+    acknowledged_at = models.DateTimeField(blank=True, null=True)
+
     # Resolution
     resolved_at = models.DateTimeField(blank=True, null=True)
     resolved_by = models.ForeignKey(

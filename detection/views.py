@@ -86,62 +86,33 @@ def upload_and_detect(request):
             # In production, save to media storage
             # detection_record.image_path = f"media/detections/{filename}"
 
-        # Check for violations and create violation records
-        violations_created = []
-        for detection in result.detections:
-            if detection['overallStatus'] != 'compliant':
-                # Get missing PPE
-                missing_ppe = [
-                    ppe['type'] for ppe in detection['ppeStatus']
-                    if ppe['status'] == 'nonCompliant'
-                ]
+        # Enforcement: de-duplicate, auto-resolve, shift counters, alerts (F1/C1/F14).
+        from .services.enforcement import process_detections
+        image_file.seek(0)
+        outcome = process_detections(
+            result.detections,
+            image=image_file,
+            session_id=session_id,
+            required_ppe=required_ppe,
+        )
+        violations_created = [
+            ViolationRecordSerializer(v, context={'request': request}).data
+            for v in outcome['created']
+        ]
 
-                # Get detected PPE
-                detected_ppe = [
-                    ppe['type'] for ppe in detection['ppeStatus']
-                    if ppe['status'] == 'compliant'
-                ]
-
-                # Get worker name from worker_id if available
-                worker_id = detection.get('workerId')
-                worker_name = None
-                if worker_id:
-                    try:
-                        from workers.models import Worker
-                        worker = Worker.objects.filter(worker_id=worker_id).first()
-                        if worker:
-                            worker_name = worker.name
-                    except Exception as e:
-                        logger.warning(f"Could not fetch worker name for {worker_id}: {e}")
-
-                # Create violation record (with image if available)
-                violation = ViolationRecord.objects.create(
-                    violation_id=str(uuid.uuid4()),
-                    worker_id=worker_id,
-                    worker_name=worker_name or worker_id or 'Unknown Worker',
-                    missing_ppe=missing_ppe,
-                    detected_ppe=detected_ppe,
-                    image=image_file,  # Store the uploaded image
-                    bounding_box=detection['boundingBox'],
-                    severity=_calculate_severity(missing_ppe)
-                )
-                violations_created.append(ViolationRecordSerializer(
-                    violation,
-                    context={'request': request}
-                ).data)
-
-                # Push to Power BI streaming dataset (non-blocking)
-                total_today = ViolationRecord.objects.filter(
-                    timestamp__date=datetime.now().date()
-                ).count()
-                push_violation(
-                    worker_id=worker_id,
-                    worker_name=worker_name or worker_id or 'Unknown Worker',
-                    missing_ppe=missing_ppe,
-                    severity=violation.severity,
-                    total_violations_today=total_today,
-                    compliance_rate=max(0.0, 100.0 - (total_today * 5)),
-                )
+        # Push each NEW violation to the Power BI streaming dataset (non-blocking).
+        for v in outcome['created']:
+            total_today = ViolationRecord.objects.filter(
+                timestamp__date=datetime.now().date()
+            ).count()
+            push_violation(
+                worker_id=v.worker_id,
+                worker_name=v.worker_name,
+                missing_ppe=v.missing_ppe,
+                severity=v.severity,
+                total_violations_today=total_today,
+                compliance_rate=max(0.0, 100.0 - (total_today * 5)),
+            )
 
         # Return detection result
         response_data = result.to_dict()
@@ -299,6 +270,13 @@ def violation_detail(request, violation_id):
             violation.resolved_at = datetime.now()
             violation.save()
 
+        # F16 audit: record status changes (resolve/dismiss/review).
+        new_status = serializer.validated_data.get('status')
+        if new_status:
+            from audit.services import record_audit
+            record_audit(request.user, f'violation_{new_status}',
+                         target_type='ViolationRecord', target_id=violation_id)
+
         return Response(ViolationRecordSerializer(
             violation,
             context={'request': request}
@@ -413,6 +391,23 @@ def _calculate_severity(missing_ppe):
         return 'medium'
     else:
         return 'low'
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def acknowledge_violation(request, violation_id):
+    """
+    F4 — Worker acknowledges a violation notification.
+    POST /api/detection/violations/{violation_id}/acknowledge/
+    """
+    from django.utils import timezone
+    violation = get_object_or_404(ViolationRecord, violation_id=violation_id)
+    violation.acknowledged_at = timezone.now()
+    violation.save(update_fields=['acknowledged_at'])
+    return Response(
+        ViolationRecordSerializer(violation, context={'request': request}).data,
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['GET'])

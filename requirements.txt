@@ -32,6 +32,12 @@ django-environ==0.12.0
 # Production / deployment
 whitenoise==6.8.2
 
+# Reports (F6 — PDF export)
+reportlab==4.5.1
+
+# Push notifications (F5 — optional; only needed if FCM_CREDENTIALS is set)
+firebase-admin==6.5.0
+
 # Utilities
 python-dateutil==2.9.0.post0
 pytz==2024.2

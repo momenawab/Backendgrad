@@ -13,6 +13,7 @@ from .views import (
     session_detail,
     health_check,
     dashboard_stats,
+    acknowledge_violation,
 )
 
 urlpatterns = [
@@ -25,6 +26,7 @@ urlpatterns = [
     # Violation endpoints
     path('violations/', violation_records, name='violation-records'),
     path('violations/<str:violation_id>/', violation_detail, name='violation-detail'),
+    path('violations/<str:violation_id>/acknowledge/', acknowledge_violation, name='violation-acknowledge'),
 
     # Session endpoints
     path('sessions/', session_list, name='session-list'),

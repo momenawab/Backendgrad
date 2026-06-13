@@ -84,6 +84,14 @@ class WorkerDetailView(generics.RetrieveUpdateDestroyAPIView):
             return WorkerUpdateSerializer
         return WorkerSerializer
 
+    def perform_destroy(self, instance):
+        # F16 audit: record worker deletion.
+        from audit.services import record_audit
+        record_audit(self.request.user, 'worker_delete',
+                     target_type='Worker', target_id=instance.worker_id,
+                     name=instance.name)
+        instance.delete()
+
 
 class WorkerByWorkerIdView(generics.RetrieveAPIView):
     """
@@ -380,3 +388,85 @@ def retrain_face_model(request):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+_SEVERITY_WEIGHT = {'low': 1, 'medium': 2, 'high': 3, 'critical': 5}
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def worker_compliance(request, worker_id):
+    """
+    F4 — Per-worker compliance score + streak.
+    GET /api/workers/{worker_id}/compliance/
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from detection.models import ViolationRecord
+
+    qs = ViolationRecord.objects.filter(worker_id=worker_id)
+    total = qs.count()
+    resolved = qs.filter(status__in=['resolved', 'dismissed']).count()
+    last = qs.order_by('-timestamp').first()
+    last_ts = last.timestamp if last else None
+    streak_days = (timezone.now() - last_ts).days if last_ts else None
+    recent = qs.filter(timestamp__gte=timezone.now() - timedelta(days=30)).count()
+    score = max(0, 100 - recent * 10)
+    return Response({
+        'worker_id': worker_id,
+        'streak_days': streak_days,
+        'score': score,
+        'total_violations': total,
+        'resolved_ratio': round(resolved / total, 2) if total else 1.0,
+        'last_violation': last_ts.isoformat() if last_ts else None,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def worker_risk(request):
+    """
+    F7 — Repeat-offender risk ranking.
+    GET /api/workers/risk/   (weighted by count, severity, recency over 30 days)
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from detection.models import ViolationRecord
+
+    since = timezone.now() - timedelta(days=30)
+    rows = []
+    for w in Worker.objects.filter(is_active=True):
+        vs = ViolationRecord.objects.filter(worker_id=w.worker_id, timestamp__gte=since)
+        score = 0
+        for v in vs:
+            weight = _SEVERITY_WEIGHT.get(v.severity, 1)
+            # recency multiplier: more recent counts more (1.0 .. 2.0)
+            age_days = max(0, (timezone.now() - v.timestamp).days)
+            recency = 1 + max(0.0, (30 - age_days) / 30)
+            score += weight * recency
+        rows.append({
+            'worker_id': w.worker_id,
+            'name': w.name,
+            'department': w.department,
+            'violations_30d': vs.count(),
+            'risk_score': round(score, 1),
+            'training_assigned': w.training_assigned,
+        })
+    rows.sort(key=lambda r: r['risk_score'], reverse=True)
+    return Response({'results': rows})
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def worker_training(request, worker_id):
+    """
+    F7 — Toggle/set the training-assigned flag.
+    PATCH /api/workers/{worker_id}/training/   body: {"training_assigned": true}
+    """
+    worker = get_object_or_404(Worker, worker_id=worker_id)
+    worker.training_assigned = bool(request.data.get('training_assigned', True))
+    worker.save(update_fields=['training_assigned'])
+    return Response({
+        'worker_id': worker.worker_id,
+        'training_assigned': worker.training_assigned,
+    })

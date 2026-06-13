@@ -35,6 +35,9 @@ class Camera(models.Model):
     thumbnail_url = models.URLField(blank=True, null=True)
     last_seen = models.DateTimeField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
+    # F3 — a restricted zone: an unrecognized (unknown) face here raises a
+    # security alert, not just a PPE compliance check.
+    is_restricted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

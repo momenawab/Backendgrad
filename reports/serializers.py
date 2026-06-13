@@ -56,7 +56,7 @@ class ReportRequestSerializer(serializers.Serializer):
     report_type = serializers.ChoiceField(choices=[
         'summary', 'violations', 'compliance', 'worker'
     ])
-    format = serializers.ChoiceField(choices=['csv', 'json'], default='json')
+    format = serializers.ChoiceField(choices=['csv', 'json', 'pdf'], default='json')
     start_date = serializers.DateTimeField(required=False)
     end_date = serializers.DateTimeField(required=False)
     department = serializers.CharField(required=False, allow_blank=True)

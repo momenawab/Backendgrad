@@ -62,6 +62,8 @@ INSTALLED_APPS = [
     'reports',
     'cameras',
     'content',
+    'incidents',
+    'audit',
 ]
 
 MIDDLEWARE = [
@@ -262,6 +264,31 @@ MISSING_PPE_TYPES = ['safetyGlasses', 'earProtection']
 
 # Detection confidence threshold
 DETECTION_CONFIDENCE_THRESHOLD = 0.5
+
+# Email (F6 scheduled reports). Defaults to console backend so it works without
+# SMTP credentials; set EMAIL_HOST/USER/PASSWORD on the server for real delivery.
+EMAIL_BACKEND = os.environ.get(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend' if DEBUG
+    else 'django.core.mail.backends.smtp.EmailBackend',
+)
+EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() == 'true'
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'SafeSight <noreply@safesight.local>')
+
+# F5 — Firebase Cloud Messaging. Path to a service-account JSON; empty = push
+# disabled (the app still gets real-time alerts over the WebSocket).
+FCM_CREDENTIALS = os.environ.get('FCM_CREDENTIALS', '')
+
+# F1 enforcement loop
+# Cooldown window: an ongoing open violation for the same worker + same missing
+# PPE within this window is de-duplicated (last_seen bumped) instead of recreated.
+VIOLATION_COOLDOWN_MINUTES = int(os.environ.get('VIOLATION_COOLDOWN_MINUTES', '10'))
+# Age after which an open violation is escalated (escalate_violations command).
+VIOLATION_ESCALATION_MINUTES = int(os.environ.get('VIOLATION_ESCALATION_MINUTES', '30'))
 
 # Image upload settings
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
