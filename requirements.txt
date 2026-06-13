@@ -4,7 +4,13 @@ djangorestframework==3.15.2
 django-cors-headers==4.6.0
 
 # Database
-mysqlclient==2.2.6
+# Production uses PostgreSQL via DATABASE_URL (see psycopg2-binary below).
+psycopg2-binary==2.9.10
+dj-database-url==2.3.0
+# mysqlclient is only needed for local MySQL (USE_MYSQL=true). It requires
+# system libmysqlclient headers to build, so it is disabled by default.
+# Uncomment locally if you run against MySQL:
+# mysqlclient==2.2.6
 
 # AI/ML
 ultralytics==8.3.40
@@ -22,6 +28,9 @@ channels-redis==4.2.1
 
 # Environment
 django-environ==0.12.0
+
+# Production / deployment
+whitenoise==6.8.2
 
 # Utilities
 python-dateutil==2.9.0.post0

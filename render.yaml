@@ -1,0 +1,35 @@
+# Render Blueprint for the SafeSight backend.
+# Deploy by pushing this repo and creating a new "Blueprint" in the Render
+# dashboard (it auto-detects this file). See DEPLOY_RENDER.md for details.
+
+databases:
+  - name: safesight-db
+    plan: free            # free Postgres expires after 90 days; upgrade to keep it
+    databaseName: safesight
+    user: safesight
+
+services:
+  - type: web
+    name: safesight-backend
+    runtime: python
+    # The ML stack (torch + dlib/face-recognition) will NOT fit Render's free
+    # 512 MB instance at runtime. "standard" (2 GB) is the practical minimum.
+    plan: standard
+    buildCommand: "./build.sh"
+    startCommand: "daphne -b 0.0.0.0 -p $PORT config.asgi:application"
+    healthCheckPath: /admin/login/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.10"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: safesight-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true     # Render generates a strong secret
+      - key: DEBUG
+        value: "False"
+      # RENDER_EXTERNAL_HOSTNAME is injected by Render and auto-added to
+      # ALLOWED_HOSTS / CSRF_TRUSTED_ORIGINS in settings.py.
+      - key: WEB_CONCURRENCY
+        value: "1"              # single daphne process; InMemoryChannelLayer is per-process

@@ -20,6 +20,12 @@ DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
+# Render provides the public hostname here at runtime; add it automatically.
+RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+    CSRF_TRUSTED_ORIGINS = [f'https://{RENDER_EXTERNAL_HOSTNAME}']
+
 
 # Application definition
 
@@ -48,6 +54,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # serve static files in production
     'corsheaders.middleware.CorsMiddleware',  # CORS middleware
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -85,7 +92,16 @@ ASGI_APPLICATION = 'config.asgi.application'
 # Switch to MySQL in production
 USE_MYSQL = os.environ.get('USE_MYSQL', 'False').lower() == 'true'
 
-if USE_MYSQL:
+# Render (and most managed Postgres) inject a DATABASE_URL. When present it
+# takes precedence over the MySQL/SQLite blocks below.
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+if DATABASE_URL:
+    import dj_database_url
+    DATABASES = {
+        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600, ssl_require=True)
+    }
+elif USE_MYSQL:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
@@ -145,6 +161,16 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Compress and cache-bust static files; lets WhiteNoise serve them efficiently.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
+
 # Media files
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -184,6 +210,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8080",
 ]
 
+# Extra origins (e.g. a Flutter Web build) can be added via env, comma-separated.
+_extra_cors = os.environ.get('CORS_ALLOWED_ORIGINS', '').strip()
+if _extra_cors:
+    CORS_ALLOWED_ORIGINS += [o.strip() for o in _extra_cors.split(',') if o.strip()]
+
 CORS_ALLOW_ALL_ORIGINS = DEBUG  # Only in development
 
 CORS_ALLOW_CREDENTIALS = True
@@ -200,7 +231,10 @@ ASGI_APPLICATION = 'config.asgi.application'
 
 
 # PPE Detection Model Settings
-PPE_MODEL_PATH = '/Users/momen/My Projects/Grad Project/Backend_grad/safesight-backend/graduation_project 2/best (4).pt'
+PPE_MODEL_PATH = os.environ.get(
+    'PPE_MODEL_PATH',
+    str(BASE_DIR / 'graduation_project 2' / 'best (4).pt'),
+)
 DETECTION_CONFIDENCE_THRESHOLD = 0.15
 
 # PPE Class mappings
