@@ -1,0 +1,19 @@
+name: Deploy to EC2
+
+# Auto-deploy whenever main is updated.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # allows a manual "Run workflow" button too
+
+# Never run two deploys at once.
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Run deploy script on the server
+        run: /home/ubuntu/safesight-backend/deploy/deploy.sh
