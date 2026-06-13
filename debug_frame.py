@@ -1,7 +1,7 @@
 from ultralytics import YOLO
 from PIL import Image
 
-model = YOLO('/Users/momen/My Projects/Grad Project/graduation_project 2/best (4).pt')
+model = YOLO('/Users/momen/My Projects/Grad Project/Backend_grad/safesight-backend/graduation_project 2/best (4).pt')
 img = Image.open('/tmp/debug_frame.jpg').convert('RGB')
 print('Image size:', img.size)
 results = model(img, conf=0.1, verbose=False)

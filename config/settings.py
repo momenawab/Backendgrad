@@ -200,7 +200,7 @@ ASGI_APPLICATION = 'config.asgi.application'
 
 
 # PPE Detection Model Settings
-PPE_MODEL_PATH = '/Users/momen/My Projects/Grad Project/graduation_project 2/best (4).pt'
+PPE_MODEL_PATH = '/Users/momen/My Projects/Grad Project/Backend_grad/safesight-backend/graduation_project 2/best (4).pt'
 DETECTION_CONFIDENCE_THRESHOLD = 0.15
 
 # PPE Class mappings
