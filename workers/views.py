@@ -238,7 +238,7 @@ def worker_violations(request, worker_id):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])  # Changed to AllowAny for testing
+@permission_classes([IsAuthenticated])
 def add_worker_with_photo(request):
     """
     Add a new worker with face photo for recognition.
@@ -284,6 +284,16 @@ def add_worker_with_photo(request):
                 'error': 'No face detected in the uploaded photo. Please upload a clear photo showing the face.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Normalize required_ppe — multipart form data sends it as a CSV string
+        # (e.g. "safetyGlasses,vest,gloves") but the JSONField expects a list.
+        raw_ppe = request.data.get('required_ppe', [])
+        if isinstance(raw_ppe, str):
+            required_ppe_list = [p.strip() for p in raw_ppe.split(',') if p.strip()]
+        elif isinstance(raw_ppe, (list, tuple)):
+            required_ppe_list = list(raw_ppe)
+        else:
+            required_ppe_list = []
+
         # Create worker with face encoding
         worker = Worker.objects.create(
             worker_id=worker_id,
@@ -294,7 +304,7 @@ def add_worker_with_photo(request):
             position=request.data.get('position'),
             shift=request.data.get('shift', 'day'),
             photo=photo,
-            required_ppe=request.data.get('required_ppe', []),
+            required_ppe=required_ppe_list,
             face_encoding=face_encoding.tolist(),  # Convert numpy to list
             face_photo_valid=True,
             created_by=request.user if request.user.is_authenticated else None
@@ -321,7 +331,7 @@ def add_worker_with_photo(request):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])  # Changed to AllowAny for testing
+@permission_classes([IsAuthenticated])
 def retrain_face_model(request):
     """
     Retrain face recognition model with all workers in database.

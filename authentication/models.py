@@ -22,11 +22,25 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='viewer')
     phone = models.CharField(max_length=20, blank=True, null=True)
     department = models.CharField(max_length=100, blank=True, null=True)
+
+    # Per-user app settings (language, theme, notification channel toggles).
+    # Served via GET/PUT /api/auth/settings/.
+    preferences = models.JSONField(default=dict, blank=True)
+
+    # Per-user notification preferences (which alert types / channels the user
+    # wants). Served via GET/PUT /api/auth/notification-preferences/.
+    notification_preferences = models.JSONField(default=dict, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'auth_user'
+
+    def save(self, *args, **kwargs):
+        if self.is_superuser and self.role == 'viewer':
+            self.role = 'admin'
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"

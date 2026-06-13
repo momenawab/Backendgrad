@@ -13,6 +13,8 @@ urlpatterns = [
     path('api/workers/', include('workers.urls')),
     path('api/alerts/', include('alerts.urls')),
     path('api/reports/', include('reports.urls')),
+    path('api/cameras/', include('cameras.urls')),
+    path('api/content/', include('content.urls')),
     path('api/', include('detection.urls')),  # For base detection endpoint
 ]
 

@@ -178,6 +178,92 @@ def me_view(request):
     })
 
 
+DEFAULT_SETTINGS = {
+    'language': 'en',
+    'theme': 'light',
+    'notifications': {'in_app': True, 'email': False, 'sms': False},
+}
+
+DEFAULT_NOTIFICATION_PREFERENCES = {
+    'enableAll': True,
+    'doNotDisturb': False,
+    'alerts': {
+        'hardHat': True,
+        'vest': True,
+        'gloves': True,
+        'steelToedBoots': True,
+        'safetyGlasses': True,
+        'earProtection': True,
+    },
+    'channels': {'in_app': True, 'email': False, 'sms': False},
+    'emailReports': False,
+    'reportFrequency': 'weekly',
+}
+
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def settings_view(request):
+    """
+    GET/PUT /api/auth/settings/
+
+    Per-user app settings: language, theme, account block, notification channels.
+    The `account` block is backed by the User's name/email/phone fields; the rest
+    lives in User.preferences (JSON).
+    """
+    user = request.user
+
+    if request.method == 'PUT':
+        data = request.data or {}
+        prefs = {**DEFAULT_SETTINGS, **(user.preferences or {})}
+        for key in ('language', 'theme', 'notifications'):
+            if key in data:
+                prefs[key] = data[key]
+        user.preferences = prefs
+
+        account = data.get('account') or {}
+        if 'email' in account:
+            user.email = account['email'] or ''
+        if 'phone' in account:
+            user.phone = account['phone']
+        if 'name' in account and account['name']:
+            parts = account['name'].split()
+            user.first_name = parts[0]
+            user.last_name = ' '.join(parts[1:]) if len(parts) > 1 else ''
+        user.save()
+
+    prefs = {**DEFAULT_SETTINGS, **(user.preferences or {})}
+    return Response({
+        'language': prefs.get('language'),
+        'theme': prefs.get('theme'),
+        'account': {
+            'name': (f"{user.first_name} {user.last_name}".strip()) or user.username,
+            'email': user.email,
+            'phone': user.phone,
+        },
+        'notifications': prefs.get('notifications'),
+    })
+
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def notification_preferences_view(request):
+    """
+    GET/PUT /api/auth/notification-preferences/
+
+    Per-user notification preferences stored in User.notification_preferences (JSON).
+    """
+    user = request.user
+
+    if request.method == 'PUT':
+        merged = {**DEFAULT_NOTIFICATION_PREFERENCES, **(user.notification_preferences or {})}
+        merged.update(request.data or {})
+        user.notification_preferences = merged
+        user.save(update_fields=['notification_preferences', 'updated_at'])
+
+    return Response({**DEFAULT_NOTIFICATION_PREFERENCES, **(user.notification_preferences or {})})
+
+
 class CreateWorkerAccountView(generics.GenericAPIView):
     """
     Admin creates a worker account.

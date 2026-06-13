@@ -60,6 +60,8 @@ INSTALLED_APPS = [
     'workers',
     'alerts',
     'reports',
+    'cameras',
+    'content',
 ]
 
 MIDDLEWARE = [
@@ -245,7 +247,6 @@ PPE_MODEL_PATH = os.environ.get(
     'PPE_MODEL_PATH',
     str(BASE_DIR / 'graduation_project 2' / 'best (4).pt'),
 )
-DETECTION_CONFIDENCE_THRESHOLD = 0.15
 
 # PPE Class mappings
 PPE_CLASS_MAP = {
