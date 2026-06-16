@@ -172,7 +172,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
-STATIC_URL = 'static/'
+# Served under /django-static/ so it doesn't collide with the React admin
+# panel's own /static/ bundles when both are served by the same nginx.
+STATIC_URL = '/django-static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Compress and cache-bust static files; lets WhiteNoise serve them efficiently.

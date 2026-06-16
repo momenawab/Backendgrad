@@ -167,6 +167,18 @@ def process_detections(detections, *, image=None, session_id=None,
     created, resolved, security = [], 0, 0
     now = timezone.now()
 
+    # F3 — resolve the restricted flag from the camera if not given explicitly.
+    if camera_id and not is_restricted:
+        try:
+            from cameras.models import Camera
+            cam = (Camera.objects.filter(id=camera_id).first()
+                   if str(camera_id).isdigit()
+                   else Camera.objects.filter(name=camera_id).first())
+            if cam:
+                is_restricted = cam.is_restricted
+        except Exception:
+            pass
+
     for det in detections or []:
         worker_id = det.get('workerId')
         overall = det.get('overallStatus')

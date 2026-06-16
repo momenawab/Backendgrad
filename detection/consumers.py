@@ -37,6 +37,7 @@ class DetectionConsumer(AsyncWebsocketConsumer):
         self.frame_count = 0
         self.required_ppe = ['hardHat', 'vest']
         self.confidence_threshold = 0.15
+        self.camera_id = None  # F3 — set via config to enable restricted-zone alerts
 
         logger.info(f"WebSocket connected: {self.session_id}")
 
@@ -87,11 +88,13 @@ class DetectionConsumer(AsyncWebsocketConsumer):
                 # Update detection configuration
                 self.required_ppe = data.get('required_ppe', self.required_ppe)
                 self.confidence_threshold = data.get('confidence_threshold', self.confidence_threshold)
+                self.camera_id = data.get('camera_id', self.camera_id)
 
                 await self.send_json({
                     'type': 'config_updated',
                     'required_ppe': self.required_ppe,
-                    'confidence_threshold': self.confidence_threshold
+                    'confidence_threshold': self.confidence_threshold,
+                    'camera_id': self.camera_id,
                 })
 
             elif message_type == 'ping':
@@ -150,6 +153,7 @@ class DetectionConsumer(AsyncWebsocketConsumer):
                 result.detections,
                 image=frame_image,
                 session_id=getattr(self, 'session_id', None),
+                camera_id=getattr(self, 'camera_id', None),
                 required_ppe=self.required_ppe,
             )
 
