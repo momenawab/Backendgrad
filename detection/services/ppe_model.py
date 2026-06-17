@@ -242,8 +242,17 @@ class PPEModelService:
                 overall_status = cls._determine_overall_status(ppe_status_list)
                 avg_conf = float(np.mean([float(boxes.conf[i]) for i in ppe_indices]))
 
+                worker_id = None
+                if image_bytes is not None:
+                    try:
+                        worker_id = FaceRecognitionService.recognize_face_from_bbox(
+                            image_bytes, asdict(bbox)
+                        )
+                    except Exception as e:
+                        logger.debug(f"Face recognition failed for person: {e}")
+
                 person_detection = PersonDetection(
-                    workerId=None,
+                    workerId=worker_id,
                     boundingBox=asdict(bbox),
                     ppeStatus=ppe_status_list,
                     overallStatus=overall_status,
@@ -295,8 +304,17 @@ class PPEModelService:
             else:
                 non_compliant_count += 1
 
-            # Face recognition disabled for emulator testing
+            # Identify the worker via face recognition (best-effort).
+            # Requires the original frame bytes; skips silently if unavailable
+            # or if no face is matched within the distance threshold.
             worker_id = None
+            if image_bytes is not None:
+                try:
+                    worker_id = FaceRecognitionService.recognize_face_from_bbox(
+                        image_bytes, asdict(bbox)
+                    )
+                except Exception as e:
+                    logger.debug(f"Face recognition failed for person: {e}")
 
             # Create person detection
             person_detection = PersonDetection(

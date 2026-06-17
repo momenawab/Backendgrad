@@ -203,9 +203,13 @@ AUTH_USER_MODEL = 'authentication.User'
 
 # Django REST Framework settings
 REST_FRAMEWORK = {
+    # Token-only: the React panel and Flutter app authenticate with DRF tokens.
+    # SessionAuthentication is intentionally omitted — once the SPA is served
+    # same-origin, a stray session cookie would otherwise trigger DRF's CSRF
+    # check on token requests ("CSRF Failed"). Django admin keeps its own
+    # session+CSRF auth independently of this setting.
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',

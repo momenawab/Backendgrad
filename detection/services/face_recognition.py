@@ -118,6 +118,15 @@ class FaceRecognitionService:
         except ImportError:
             logger.error("face_recognition library not installed. Install with: pip install face-recognition")
             return None
+        except SystemExit as e:
+            # face_recognition calls quit()/sys.exit() at import time when the
+            # face_recognition_models weights package is missing. SystemExit is a
+            # BaseException, so catch it explicitly to avoid killing the request.
+            logger.error(
+                "face_recognition_models not installed. Install with: "
+                "pip install git+https://github.com/ageitgey/face_recognition_models"
+            )
+            return None
         except Exception as e:
             logger.error(f"Error extracting face encoding: {e}")
             return None
@@ -144,6 +153,12 @@ class FaceRecognitionService:
                 {"top": t, "right": r, "bottom": b, "left": l}
                 for t, r, b, l in face_locations
             ]
+        except SystemExit:
+            logger.error(
+                "face_recognition_models not installed. Install with: "
+                "pip install git+https://github.com/ageitgey/face_recognition_models"
+            )
+            return []
         except Exception as e:
             logger.error(f"Error detecting faces: {e}")
             return []
@@ -244,6 +259,11 @@ class FaceRecognitionService:
                 encodings = face_recognition.face_encodings(face_array)
                 if len(encodings) > 0:
                     return cls.recognize_face(encodings[0])
+            except SystemExit:
+                logger.error(
+                    "face_recognition_models not installed. Install with: "
+                    "pip install git+https://github.com/ageitgey/face_recognition_models"
+                )
             except Exception as e:
                 logger.debug(f"Face encoding failed from bbox: {e}")
 
