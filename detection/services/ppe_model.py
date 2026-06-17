@@ -64,6 +64,30 @@ class PersonDetection:
     ppeStatus: List[Dict[str, Any]]
     overallStatus: str  # 'compliant', 'partial', 'nonCompliant'
     confidence: float
+    workerName: Optional[str] = None
+
+
+def _resolve_worker_name(worker_id: Optional[str]) -> Optional[str]:
+    """Map a recognized worker_id to the worker's display name.
+
+    Cached per-process to avoid a DB hit on every frame/person.
+    """
+    if not worker_id:
+        return None
+    cache = getattr(_resolve_worker_name, "_cache", None)
+    if cache is None:
+        cache = {}
+        _resolve_worker_name._cache = cache
+    if worker_id in cache:
+        return cache[worker_id]
+    try:
+        from workers.models import Worker
+        name = Worker.objects.filter(worker_id=worker_id).values_list('name', flat=True).first()
+    except Exception:
+        name = None
+    if name:
+        cache[worker_id] = name
+    return name
 
 
 @dataclass
@@ -253,6 +277,7 @@ class PPEModelService:
 
                 person_detection = PersonDetection(
                     workerId=worker_id,
+                    workerName=_resolve_worker_name(worker_id),
                     boundingBox=asdict(bbox),
                     ppeStatus=ppe_status_list,
                     overallStatus=overall_status,
@@ -319,6 +344,7 @@ class PPEModelService:
             # Create person detection
             person_detection = PersonDetection(
                 workerId=worker_id,  # Populated by face recognition if available
+                workerName=_resolve_worker_name(worker_id),
                 boundingBox=asdict(bbox),
                 ppeStatus=ppe_status_list,
                 overallStatus=overall_status,
