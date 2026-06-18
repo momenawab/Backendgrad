@@ -9,6 +9,7 @@ import json
 import uuid
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.exceptions import StopConsumer
+from channels.db import database_sync_to_async
 import asyncio
 
 from .services import PPEModelService
@@ -86,9 +87,19 @@ class DetectionConsumer(AsyncWebsocketConsumer):
 
             if message_type == 'config':
                 # Update detection configuration
-                self.required_ppe = data.get('required_ppe', self.required_ppe)
                 self.confidence_threshold = data.get('confidence_threshold', self.confidence_threshold)
                 self.camera_id = data.get('camera_id', self.camera_id)
+
+                # Per-camera PPE policy. An explicit required_ppe in the message
+                # wins; otherwise, if a camera_id is set, load that camera's
+                # configured required_ppe from the DB.
+                explicit_ppe = data.get('required_ppe')
+                if explicit_ppe is not None:
+                    self.required_ppe = explicit_ppe
+                elif self.camera_id:
+                    cam_ppe = await self._get_camera_required_ppe(self.camera_id)
+                    if cam_ppe:
+                        self.required_ppe = cam_ppe
 
                 await self.send_json({
                     'type': 'config_updated',
@@ -111,6 +122,16 @@ class DetectionConsumer(AsyncWebsocketConsumer):
                 'type': 'error',
                 'message': 'Invalid JSON format'
             })
+
+    @database_sync_to_async
+    def _get_camera_required_ppe(self, camera_id):
+        """Look up a camera's configured required_ppe (or None)."""
+        try:
+            from cameras.models import Camera
+            cam = Camera.objects.filter(id=camera_id).first()
+            return (cam.required_ppe or None) if cam else None
+        except (ValueError, TypeError):
+            return None
 
     async def handle_image_frame(self, bytes_data):
         """Handle binary image frames for detection."""

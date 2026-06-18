@@ -26,6 +26,15 @@ class Camera(models.Model):
         help_text="IP address or stream URL of the camera"
     )
     location = models.CharField(max_length=200, blank=True, null=True)
+    # Per-camera PPE policy: which protective equipment the AI must enforce for
+    # this camera/zone. Detection (live ws/detect/ and image upload) uses this
+    # when a camera_id is supplied; falls back to all four if empty.
+    required_ppe = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="PPE types the AI enforces for this camera, e.g. "
+                  "['hardHat', 'vest', 'gloves', 'steelToedBoots']",
+    )
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,

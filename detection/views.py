@@ -55,6 +55,15 @@ def upload_and_detect(request):
         required_ppe = serializer.validated_data.get('required_ppe')
         conf_threshold = serializer.validated_data.get('confidence_threshold')
 
+        # Per-camera PPE policy: if no explicit list was sent but a camera_id is
+        # provided, enforce that camera's configured required_ppe.
+        camera_id = request.data.get('camera_id')
+        if required_ppe is None and camera_id:
+            from cameras.models import Camera
+            cam = Camera.objects.filter(id=camera_id).first()
+            if cam and cam.required_ppe:
+                required_ppe = cam.required_ppe
+
         # Set defaults
         if required_ppe is None:
             required_ppe = ['hardHat', 'vest', 'gloves', 'steelToedBoots']
