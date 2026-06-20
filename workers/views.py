@@ -256,7 +256,8 @@ def add_worker_with_photo(request):
     Body (multipart/form-data):
         worker_id: string (required)
         name: string (required)
-        photo: file (required - clear face photo)
+        photos: file[] (one or more clear face photos, ideally multiple angles)
+        photo: file (legacy single-photo fallback)
         email: string (optional)
         phone: string (optional)
         department: string (optional)
@@ -264,18 +265,25 @@ def add_worker_with_photo(request):
         shift: string (optional)
         required_ppe: array (optional)
     """
-    from detection.services.face_recognition import FaceRecognitionService
-    import numpy as np
+    from detection.services.face_recognition import (
+        FaceRecognitionService, EMBEDDING_MODEL_ID,
+    )
 
     try:
         # Extract data
         worker_id = request.data.get('worker_id')
         name = request.data.get('name')
-        photo = request.data.get('photo')
 
-        if not all([worker_id, name, photo]):
+        # Accept multiple photos ("photos") with a single-photo fallback.
+        photos = request.FILES.getlist('photos')
+        if not photos:
+            single = request.FILES.get('photo')
+            if single:
+                photos = [single]
+
+        if not all([worker_id, name]) or not photos:
             return Response({
-                'error': 'worker_id, name, and photo are required'
+                'error': 'worker_id, name, and at least one photo are required'
             }, status=status.HTTP_400_BAD_REQUEST)
 
         # Check if worker_id already exists
@@ -284,12 +292,21 @@ def add_worker_with_photo(request):
                 'error': 'A worker with this ID already exists'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Extract face encoding from photo
-        face_encoding = FaceRecognitionService.extract_face_encoding(photo.read())
+        # Validate every photo through the quality gate and collect embeddings.
+        embeddings = []
+        rejected = []
+        for idx, f in enumerate(photos):
+            result = FaceRecognitionService.assess_enrollment_photo(f.read())
+            if result['ok']:
+                embeddings.append(result['embedding'])
+            else:
+                rejected.append({'index': idx, 'reason': result['reason']})
 
-        if face_encoding is None:
+        if not embeddings:
             return Response({
-                'error': 'No face detected in the uploaded photo. Please upload a clear photo showing the face.'
+                'error': 'No usable face photo. Please retake with a clear, '
+                         'well-lit, front-facing photo.',
+                'rejected': rejected,
             }, status=status.HTTP_400_BAD_REQUEST)
 
         # Normalize required_ppe — multipart form data sends it as a CSV string
@@ -302,7 +319,7 @@ def add_worker_with_photo(request):
         else:
             required_ppe_list = []
 
-        # Create worker with face encoding
+        # Create worker. The first photo doubles as the profile image.
         worker = Worker.objects.create(
             worker_id=worker_id,
             name=name,
@@ -311,24 +328,23 @@ def add_worker_with_photo(request):
             department=request.data.get('department'),
             position=request.data.get('position'),
             shift=request.data.get('shift', 'day'),
-            photo=photo,
+            photo=photos[0],
             required_ppe=required_ppe_list,
-            face_encoding=face_encoding.tolist(),  # Convert numpy to list
+            face_embeddings=embeddings,
+            embedding_model=EMBEDDING_MODEL_ID,
             face_photo_valid=True,
             created_by=request.user if request.user.is_authenticated else None
         )
 
-        # Add to face recognition model
-        success = FaceRecognitionService.add_worker_to_model(worker_id, face_encoding)
-
-        if not success:
-            logger.warning(f"Worker created but not added to face model: {worker_id}")
+        # Refresh the in-memory recognition index with the new worker.
+        FaceRecognitionService.add_worker_to_model(worker_id)
 
         return Response({
             'message': 'Worker added successfully',
             'worker_id': worker_id,
             'name': worker.name,
-            'face_encoding_stored': True
+            'embeddings_stored': len(embeddings),
+            'rejected': rejected,
         }, status=status.HTTP_201_CREATED)
 
     except Exception as e:
@@ -347,41 +363,21 @@ def retrain_face_model(request):
     POST /api/workers/retrain-face-model/
     """
     from detection.services.face_recognition import FaceRecognitionService
-    import numpy as np
 
     try:
-        # Load all workers with valid face encodings
-        workers = Worker.objects.filter(face_photo_valid=True)
+        # Embeddings live on the Worker rows, so "retraining" just rebuilds the
+        # in-memory cosine index from the database.
+        FaceRecognitionService.retrain_from_workers()
+        count = FaceRecognitionService.get_worker_count()
 
-        if workers.count() == 0:
+        if count == 0:
             return Response({
-                'error': 'No workers with valid photos found'
+                'error': 'No workers with stored face embeddings found'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        workers_data = []
-        for worker in workers:
-            if worker.face_encoding:
-                workers_data.append({
-                    'worker_id': worker.worker_id,
-                    'face_encoding': np.array(worker.face_encoding)
-                })
-
-        if not workers_data:
-            return Response({
-                'error': 'No workers with face encodings found'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Retrain model
-        success = FaceRecognitionService.retrain_from_workers(workers_data)
-
-        if success:
-            return Response({
-                'message': f'Model retrained with {len(workers_data)} workers'
-            })
-        else:
-            return Response({
-                'error': 'Failed to retrain model'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({
+            'message': f'Face index rebuilt with {count} workers'
+        })
 
     except Exception as e:
         logger.error(f"Error retraining model: {e}")

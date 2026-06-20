@@ -237,6 +237,16 @@ class PPEModelService:
         boxes = result.boxes
         img_height, img_width = result.orig_shape  # YOLO orig_shape is (H, W)
 
+        # Detect + recognize all faces in the frame in a single detector pass,
+        # then associate them with person boxes below. Far cheaper than running
+        # face detection once per person.
+        frame_faces = []
+        if image_bytes is not None:
+            try:
+                frame_faces = FaceRecognitionService.recognize_faces_in_frame(image_bytes)
+            except Exception as e:
+                logger.debug(f"Frame face recognition failed: {e}")
+
         # Group detections by person
         person_indices = [i for i, cls_id in enumerate(boxes.cls) if int(cls_id) == 2]
 
@@ -266,14 +276,9 @@ class PPEModelService:
                 overall_status = cls._determine_overall_status(ppe_status_list)
                 avg_conf = float(np.mean([float(boxes.conf[i]) for i in ppe_indices]))
 
-                worker_id = None
-                if image_bytes is not None:
-                    try:
-                        worker_id = FaceRecognitionService.recognize_face_from_bbox(
-                            image_bytes, asdict(bbox)
-                        )
-                    except Exception as e:
-                        logger.debug(f"Face recognition failed for person: {e}")
+                worker_id = FaceRecognitionService.match_person_to_worker(
+                    (synth_x1, synth_y1, synth_x2, synth_y2), frame_faces
+                )
 
                 person_detection = PersonDetection(
                     workerId=worker_id,
@@ -329,17 +334,11 @@ class PPEModelService:
             else:
                 non_compliant_count += 1
 
-            # Identify the worker via face recognition (best-effort).
-            # Requires the original frame bytes; skips silently if unavailable
-            # or if no face is matched within the distance threshold.
-            worker_id = None
-            if image_bytes is not None:
-                try:
-                    worker_id = FaceRecognitionService.recognize_face_from_bbox(
-                        image_bytes, asdict(bbox)
-                    )
-                except Exception as e:
-                    logger.debug(f"Face recognition failed for person: {e}")
+            # Identify the worker by associating a recognized frame face with
+            # this person box (best-effort; None if no confident match).
+            worker_id = FaceRecognitionService.match_person_to_worker(
+                (float(x1), float(y1), float(x2), float(y2)), frame_faces
+            )
 
             # Create person detection
             person_detection = PersonDetection(

@@ -65,10 +65,29 @@ class Worker(models.Model):
     )
 
     # Face recognition fields
+    # Legacy single 128-d dlib encoding (kept for backwards compatibility;
+    # no longer used for matching once a worker has ArcFace embeddings).
     face_encoding = models.JSONField(
         blank=True,
         null=True,
-        help_text="Cached 128-dimensional face encoding vector"
+        help_text="Legacy 128-d dlib encoding (deprecated)"
+    )
+
+    # One or more L2-normalized ArcFace embeddings (512-d each), captured from
+    # multiple angles for robust recognition.
+    face_embeddings = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of L2-normalized face embedding vectors"
+    )
+
+    # Identifier of the model that produced face_embeddings (e.g.
+    # 'arcface_buffalo_l') so stale embeddings can be detected and ignored.
+    embedding_model = models.CharField(
+        max_length=50,
+        blank=True,
+        default='',
+        help_text="Model id that produced the stored embeddings"
     )
 
     face_photo_valid = models.BooleanField(
